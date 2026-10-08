@@ -330,7 +330,9 @@ void PCLLocalization::initialPoseReceived(const geometry_msgs::msg::PoseWithCova
     }
   }
   pose_pub_->publish(*corrent_pose_with_cov_stamped_ptr_);
-  if (publishPoseTransform(msg->header.stamp, corrent_pose_with_cov_stamped_ptr_->pose.pose)) {
+  if (publishPoseTransform(
+      msg->header.stamp, corrent_pose_with_cov_stamped_ptr_->pose.pose, true, true))
+  {
     if (enable_map_odom_tf_) {
       RCLCPP_INFO(
         get_logger(),

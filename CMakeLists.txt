@@ -116,7 +116,7 @@ ament_target_dependencies(relocalization_ndt_score_jobs
 )
 target_link_libraries(relocalization_ndt_score_jobs
   -Wl,--start-group
-  ${ndt_omp_ros2_LIBRARIES}
+  ndt_omp_ros2::ndt_omp
   ${PCL_LIBRARIES}
   -Wl,--end-group
 )

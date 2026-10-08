@@ -697,11 +697,13 @@ public:
   bool publishPoseTransform(
     const builtin_interfaces::msg::Time & stamp,
     const geometry_msgs::msg::Pose & pose,
-    bool freeze_as_last_good = true);
+    bool freeze_as_last_good = true,
+    bool allow_latest_odom = false);
   bool publishMapToOdomTransform(
     const builtin_interfaces::msg::Time & stamp,
     const geometry_msgs::msg::TransformStamped & map_to_base_link_stamped,
-    bool freeze_as_last_good = true);
+    bool freeze_as_last_good = true,
+    bool allow_latest_odom = false);
   void republishFrozenMapToOdomTransform(const builtin_interfaces::msg::Time & stamp);
   void publishOdomBridgePose(
     const builtin_interfaces::msg::Time & stamp,

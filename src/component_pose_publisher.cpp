@@ -1,4 +1,6 @@
 #include "component_internal.hpp"
+#include <cmath>
+
 void PCLLocalization::setCurrentPoseFromMatrix(
   const Eigen::Matrix4f & pose_matrix,
   const builtin_interfaces::msg::Time & stamp)
@@ -71,7 +73,8 @@ void PCLLocalization::publishPathMessage()
 bool PCLLocalization::publishPoseTransform(
   const builtin_interfaces::msg::Time & stamp,
   const geometry_msgs::msg::Pose & pose,
-  bool freeze_as_last_good)
+  bool freeze_as_last_good,
+  bool allow_latest_odom)
 {
   const geometry_msgs::msg::TransformStamped map_to_base_link_stamped =
     lidar_localization::makeMapToBaseTransform(
@@ -84,23 +87,44 @@ bool PCLLocalization::publishPoseTransform(
     return true;
   }
 
-  return publishMapToOdomTransform(stamp, map_to_base_link_stamped, freeze_as_last_good);
+  return publishMapToOdomTransform(
+    stamp, map_to_base_link_stamped, freeze_as_last_good, allow_latest_odom);
 }
 
 bool PCLLocalization::publishMapToOdomTransform(
   const builtin_interfaces::msg::Time & stamp,
   const geometry_msgs::msg::TransformStamped & map_to_base_link_stamped,
-  bool freeze_as_last_good)
+  bool freeze_as_last_good,
+  bool allow_latest_odom)
 {
   geometry_msgs::msg::TransformStamped odom_to_base_link_msg;
   try {
     odom_to_base_link_msg = tfbuffer_.lookupTransform(
       odom_frame_id_, base_frame_id_, stamp, rclcpp::Duration::from_seconds(0.1));
-  } catch (tf2::TransformException & ex) {
-    RCLCPP_WARN(
-      this->get_logger(), "Could not get transform %s to %s: %s",
-      base_frame_id_.c_str(), odom_frame_id_.c_str(), ex.what());
-    return false;
+  } catch (const tf2::TransformException & ex) {
+    if (!allow_latest_odom) {
+      RCLCPP_WARN(
+        get_logger(), "Could not get transform %s to %s: %s",
+        base_frame_id_.c_str(), odom_frame_id_.c_str(), ex.what());
+      return false;
+    }
+    // Only an explicit initial/reset pose may anchor to a recent odometry sample.
+    try {
+      odom_to_base_link_msg = tfbuffer_.lookupTransform(
+        odom_frame_id_, base_frame_id_, tf2::TimePointZero);
+      const double offset = std::abs(
+        stamp_to_sec(stamp) - stamp_to_sec(odom_to_base_link_msg.header.stamp));
+      if (offset > 0.5) {
+        RCLCPP_WARN(get_logger(), "Initial-pose odometry sample is %.3f s away", offset);
+        return false;
+      }
+      RCLCPP_WARN(
+        get_logger(), "Initial pose anchored with recent odometry after stamped lookup failed: %s",
+        ex.what());
+    } catch (const tf2::TransformException & latest_ex) {
+      RCLCPP_WARN(get_logger(), "Initial-pose odometry unavailable: %s", latest_ex.what());
+      return false;
+    }
   }
   const geometry_msgs::msg::TransformStamped map_to_odom =
     lidar_localization::composeMapToOdomTransform(

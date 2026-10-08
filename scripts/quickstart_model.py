@@ -392,6 +392,8 @@ class StartupObservation:
     query_candidate_scores: tuple[float, ...] | None = None
     query_candidate_age_sec: float | None = None
     query_top_pose: tuple[float, float, float] | None = None
+    query_candidate_poses: tuple[tuple[float, float, float], ...] | None = None
+    query_candidate_registration_fitness: tuple[float | None, ...] | None = None
     query_scan_stamp_sec: float | None = None
     query_top_registration_fitness: float | None = None
     query_alternative_registration_fitness: float | None = None
@@ -773,6 +775,53 @@ def _publish_confirmed_fix(
     )
 
 
+def _stationary_consensus_candidate(
+    params: StartupParams, state: StartupState, obs: StartupObservation
+) -> int | None:
+    """Resolve a score tie from a fresh view without weakening odometry/NDT gates."""
+    poses = obs.query_candidate_poses
+    scores = obs.query_candidate_scores
+    if (
+        obs.query_odom_pose is not None
+        or state.consensus_samples == 0
+        or state.consensus_pose is None
+        or state.consensus_scan_stamp_sec is None
+        or obs.query_scan_stamp_sec is None
+        or not math.isfinite(obs.query_scan_stamp_sec)
+        or obs.query_scan_stamp_sec <= state.consensus_scan_stamp_sec + 1.0e-9
+        or obs.query_candidate_age_sec is None
+        or not math.isfinite(obs.query_candidate_age_sec)
+        or not 0.0 <= obs.query_candidate_age_sec <= params.max_candidate_age_sec
+        or not poses
+        or not scores
+        or len(poses) != len(scores)
+        or registration_high_confidence(params, obs.query_top_registration_fitness)
+    ):
+        return None
+    for index, (score, pose) in enumerate(zip(scores, poses)):
+        if (
+            math.isfinite(score)
+            and score >= params.min_candidate_score
+            and all(math.isfinite(value) for value in pose)
+            and _consensus_consistent(params, pose, state.consensus_pose)
+        ):
+            fitness = obs.query_candidate_registration_fitness
+            if obs.query_top_registration_fitness is not None or (
+                fitness is not None and any(value is not None for value in fitness)
+            ):
+                if fitness is None or len(fitness) != len(poses):
+                    continue
+                value = fitness[index]
+                if (
+                    value is None
+                    or not math.isfinite(value)
+                    or value > params.verification_fitness_threshold
+                ):
+                    continue
+            return index
+    return None
+
+
 def decide_startup(
     params: StartupParams, state: StartupState, obs: StartupObservation
 ) -> StartupDecision:
@@ -852,11 +901,40 @@ def decide_startup(
             or scores[0] < params.min_candidate_score
         ):
             return _query(params, retry_state, obs.now_sec, "weak_candidate_retry")
+        candidate_index = 0
+        consensus_index = _stationary_consensus_candidate(params, state, obs)
+        if consensus_index is not None:
+            candidate_index = consensus_index
+            selected_pose = obs.query_candidate_poses[candidate_index]
+            fitness = obs.query_candidate_registration_fitness
+            selected_fitness = None
+            alternative_fitness = None
+            if fitness is not None and len(fitness) == len(obs.query_candidate_poses):
+                selected_fitness = fitness[candidate_index]
+                alternatives = [
+                    value
+                    for index, (pose, value) in enumerate(
+                        zip(obs.query_candidate_poses, fitness)
+                    )
+                    if index != candidate_index
+                    and value is not None
+                    and math.isfinite(value)
+                    and math.hypot(pose[0] - selected_pose[0], pose[1] - selected_pose[1])
+                    >= params.registration_alternative_min_separation_m
+                ]
+                alternative_fitness = min(alternatives) if alternatives else None
+            obs = replace(
+                obs,
+                query_top_pose=selected_pose,
+                query_top_registration_fitness=selected_fitness,
+                query_alternative_registration_fitness=alternative_fitness,
+            )
         high_confidence = registration_high_confidence(
             params, obs.query_top_registration_fitness
         )
         if (
-            not high_confidence
+            consensus_index is None
+            and not high_confidence
             and not registration_distinctiveness_judged(
                 params,
                 obs.query_top_registration_fitness,
@@ -895,6 +973,7 @@ def decide_startup(
                 ACTION_PUBLISH_GLOBAL,
                 "global_registration_high_confidence",
                 next_state,
+                candidate_index=candidate_index,
             )
         if odom_fix:
             agreeing = _odom_agreements(params, state, obs, gated_only=False)
@@ -951,7 +1030,8 @@ def decide_startup(
             confirmation_samples=0,
         )
         return StartupDecision(
-            ACTION_PUBLISH_GLOBAL, "global_candidate_accepted", next_state
+            ACTION_PUBLISH_GLOBAL, "global_candidate_accepted", next_state,
+            candidate_index=candidate_index,
         )
 
     if state.name == STATE_VERIFYING:

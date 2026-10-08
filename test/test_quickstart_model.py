@@ -789,6 +789,64 @@ class TestStartupPolicy(unittest.TestCase):
         self.assertEqual(mismatch.action, MODEL.ACTION_QUERY_GLOBAL)
         self.assertEqual(mismatch.reason, "global_consensus_mismatch_retry")
 
+    def test_consensus_selects_matching_candidate_despite_score_tie(self):
+        params = MODEL.StartupParams(
+            min_score_margin=0.03,
+            global_consensus_samples=2,
+            global_consensus_translation_m=0.5,
+            global_consensus_yaw_deg=15.0,
+        )
+        decision = MODEL.decide_startup(
+            params, MODEL.StartupState(), self.obs(0.0)
+        )
+        primed = MODEL.decide_startup(
+            params,
+            decision.state,
+            self.obs(
+                1.0,
+                query_candidate_scores=(0.997, 0.95),
+                query_candidate_age_sec=0.1,
+                query_top_pose=(0.1, 0.0, 0.1),
+                query_candidate_poses=((0.1, 0.0, 0.1), (5.0, 0.0, 2.0)),
+                query_scan_stamp_sec=10.0,
+            ),
+        )
+        accepted = MODEL.decide_startup(
+            params,
+            primed.state,
+            self.obs(
+                2.0,
+                query_candidate_scores=(0.9972, 0.9971),
+                query_candidate_age_sec=0.1,
+                query_top_pose=(2.5, 0.7, 0.35),
+                query_candidate_poses=((2.5, 0.7, 0.35), (0.2, 0.1, 0.12)),
+                query_scan_stamp_sec=10.1,
+            ),
+        )
+        self.assertEqual(accepted.action, MODEL.ACTION_PUBLISH_GLOBAL)
+        self.assertEqual(accepted.candidate_index, 1)
+        self.assertEqual(accepted.state.consensus_pose, (0.2, 0.1, 0.12))
+
+    def test_ambiguous_candidates_without_consensus_still_retry(self):
+        params = MODEL.StartupParams(min_score_margin=0.03)
+        decision = MODEL.decide_startup(
+            params, MODEL.StartupState(), self.obs(0.0)
+        )
+        ambiguous = MODEL.decide_startup(
+            params,
+            decision.state,
+            self.obs(
+                1.0,
+                query_candidate_scores=(0.9972, 0.9971),
+                query_candidate_age_sec=0.1,
+                query_top_pose=(2.5, 0.7, 0.35),
+                query_candidate_poses=((2.5, 0.7, 0.35), (0.2, 0.1, 0.12)),
+                query_scan_stamp_sec=10.0,
+            ),
+        )
+        self.assertEqual(ambiguous.action, MODEL.ACTION_QUERY_GLOBAL)
+        self.assertEqual(ambiguous.reason, "ambiguous_candidate_retry")
+
     def test_in_flight_query_timeout_falls_back_without_duplicate_attempt(self):
         decision = MODEL.decide_startup(
             self.params, MODEL.StartupState(), self.obs(0.0)

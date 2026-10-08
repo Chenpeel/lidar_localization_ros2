@@ -243,6 +243,8 @@ class StartupInitializationNode(Node):
         self.pending_scores = None
         self.pending_candidate_age = None
         self.pending_top_pose = None
+        self.pending_candidate_poses = None
+        self.pending_candidate_registration_fitness = None
         self.pending_scan_stamp_sec = None
         self.pending_top_registration_fitness = None
         self.pending_alternative_registration_fitness = None
@@ -446,6 +448,8 @@ class StartupInitializationNode(Node):
             query_candidate_scores=self.pending_scores,
             query_candidate_age_sec=self.pending_candidate_age,
             query_top_pose=self.pending_top_pose,
+            query_candidate_poses=self.pending_candidate_poses,
+            query_candidate_registration_fitness=self.pending_candidate_registration_fitness,
             query_scan_stamp_sec=self.pending_scan_stamp_sec,
             query_top_registration_fitness=self.pending_top_registration_fitness,
             query_alternative_registration_fitness=(
@@ -459,6 +463,8 @@ class StartupInitializationNode(Node):
         self.pending_scores = None
         self.pending_candidate_age = None
         self.pending_top_pose = None
+        self.pending_candidate_poses = None
+        self.pending_candidate_registration_fitness = None
         self.pending_scan_stamp_sec = None
         self.pending_top_registration_fitness = None
         self.pending_alternative_registration_fitness = None
@@ -548,6 +554,15 @@ class StartupInitializationNode(Node):
                 float(top["y"]),
                 math.radians(float(top["yaw_deg"])),
             )
+            self.pending_candidate_poses = tuple(
+                (float(item["x"]), float(item["y"]), math.radians(float(item["yaw_deg"])))
+                for item in candidates
+            )
+            self.pending_candidate_registration_fitness = tuple(
+                float(item["registration_fitness"])
+                if item.get("registration_fitness") is not None else None
+                for item in candidates
+            )
             reg_fit = top.get("registration_fitness")
             self.pending_top_registration_fitness = (
                 float(reg_fit) if reg_fit is not None else None
@@ -578,6 +593,8 @@ class StartupInitializationNode(Node):
             self.pending_scores = ()
             self.pending_candidate_age = None
             self.pending_top_pose = None
+            self.pending_candidate_poses = None
+            self.pending_candidate_registration_fitness = None
             self.pending_scan_stamp_sec = None
             self.pending_top_registration_fitness = None
             self.pending_alternative_registration_fitness = None
