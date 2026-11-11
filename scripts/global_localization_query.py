@@ -83,6 +83,9 @@ class GlobalLocalizationConfig:
     # also snaps *wrong* hypotheses to locally-perfect alignments and collapses nearby
     # walk candidates onto one pose — keep it off unless the scenario shows it helps.
     registration_refine_candidates: bool = False
+    # 精修不得降低同一帧在 BBS 地图上的占据一致性.
+    registration_refine_bbs_guard: bool = False
+    registration_refine_bbs_margin: float = 0.01
     # Opt-in (0 = off): a scan with fewer points than this in the height band (2D
     # cells at the grid resolution, before the max_scan_points cap) is searched
     # again from the sensor plane up (SPARSE_BAND_*). A sensor mounted low
@@ -203,6 +206,8 @@ class GlobalLocalizationCandidate:
     bbs_score: float
     registration_fitness: float | None = None
     registration_converged: bool | None = None
+    refinement_used: bool = False
+    refined_bbs_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -232,6 +237,8 @@ def _candidate_from_ranked(
         bbs_score=ranked.bbs_score,
         registration_fitness=ranked.registration_fitness,
         registration_converged=ranked.registration_converged,
+        refinement_used=ranked.refinement_used,
+        refined_bbs_score=ranked.refined_bbs_score,
     )
 
 
@@ -361,17 +368,39 @@ class GlobalLocalizationEngine:
                 return ground + sensor_height
         return self._registration_seed_z_m
 
+    def _bbs_score_at_pose(self, scan_xy, x_m, y_m, yaw_rad):
+        """以同一 BBS 栅格和同一批扫描校验精修位姿."""
+        if scan_xy is None or scan_xy.size == 0:
+            return None
+        occupancy = self.occupancy_map
+        dx, dy = x_m - occupancy.origin_x_m, y_m - occupancy.origin_y_m
+        c, s = math.cos(occupancy.origin_yaw_rad), math.sin(occupancy.origin_yaw_rad)
+        local_yaw = yaw_rad - occupancy.origin_yaw_rad
+        cy, sy = math.cos(local_yaw), math.sin(local_yaw)
+        scan = scan_xy / occupancy.resolution_m
+        ix = np.floor((c * dx + s * dy) / occupancy.resolution_m
+                      + cy * scan[:, 0] - sy * scan[:, 1]).astype(np.int64)
+        iy = np.floor((-s * dx + c * dy) / occupancy.resolution_m
+                      + sy * scan[:, 0] + cy * scan[:, 1]).astype(np.int64)
+        height, width = self.matching_grid.shape
+        inside = (ix >= 0) & (iy >= 0) & (ix < width) & (iy < height)
+        return float(np.count_nonzero(self.matching_grid[iy[inside], ix[inside]])) / len(scan)
+
     def _score_with_registration(
         self,
         points_xyz,
         candidates: list[GlobalLocalizationCandidate],
         refine: bool | None = None,
+        scan_xy=None,
     ) -> list[GlobalLocalizationCandidate]:
         if self.registration_scorer is None:
             return candidates
         if refine is None:
             refine = self.config.registration_refine_candidates
 
+        margin = self.config.registration_refine_bbs_margin
+        if not math.isfinite(margin) or not 0.0 <= margin <= 1.0:
+            raise ValueError("registration_refine_bbs_margin 必须在 [0, 1] 内")
         score_zs = [self._registration_seed_z(candidate) for candidate in candidates]
         # One call, so the scorer can share a map crop among nearby candidates.
         results = self.registration_scorer.score_candidates(
@@ -390,6 +419,8 @@ class GlobalLocalizationEngine:
                 if result.converged and math.isfinite(result.fitness)
                 else float("inf")
             )
+            refinement_used = False
+            refined_bbs_score = None
             if refine:
                 pose_x, pose_y, pose_z, pose_yaw = (
                     g2_rank.candidate_pose_from_registration(
@@ -413,6 +444,20 @@ class GlobalLocalizationEngine:
                         refined_yaw=float(result.refined_yaw),
                     )
                 )
+                refinement_used = math.isfinite(fitness) and all(
+                    math.isfinite(value) for value in (pose_x, pose_y, pose_z, pose_yaw))
+                if refinement_used and self.config.registration_refine_bbs_guard:
+                    refined_bbs_score = self._bbs_score_at_pose(
+                        scan_xy, pose_x, pose_y, pose_yaw)
+                    refinement_used = (
+                        refined_bbs_score is not None
+                        and math.isfinite(refined_bbs_score)
+                        and refined_bbs_score + margin >= candidate.bbs_score)
+                if not refinement_used:
+                    # 精修未通过时不可把精修 fitness 用在未验证的粗位姿上.
+                    fitness = float("inf")
+                    pose_x, pose_y, pose_z, pose_yaw = (
+                        candidate.x_m, candidate.y_m, score_z, candidate.yaw_rad)
             else:
                 # Keep the BBS cell and heading, but report the height the
                 # candidate was verified at: a 2D candidate has no height of
@@ -438,7 +483,9 @@ class GlobalLocalizationEngine:
                     score=candidate.score,
                     hit_count=candidate.hit_count,
                     point_count=candidate.point_count,
-                    registration_converged=bool(result.converged),
+                    registration_converged=bool(result.converged) and math.isfinite(fitness),
+                    refinement_used=refinement_used,
+                    refined_bbs_score=refined_bbs_score,
                 )
             )
         reranked = g2_rank.apply_registration_ranking(
@@ -630,7 +677,8 @@ class GlobalLocalizationEngine:
             if progress_callback is not None:
                 progress_callback("scoring", 0, len(candidates))
             candidates = self._score_with_registration(
-                points_xyz, candidates, refine=True if sparse_band else None
+                points_xyz, candidates, refine=True if sparse_band else None,
+                scan_xy=scan_xy,
             )
 
         if progress_callback is not None:

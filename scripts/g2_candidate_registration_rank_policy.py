@@ -25,6 +25,8 @@ class RankedG2Candidate:
     hit_count: int = 0
     point_count: int = 0
     registration_converged: bool | None = None
+    refinement_used: bool = False
+    refined_bbs_score: float | None = None
 
 
 def registration_fitness_to_supervisor_score(
@@ -94,6 +96,8 @@ def apply_registration_ranking(
                 hit_count=candidate.hit_count,
                 point_count=candidate.point_count,
                 registration_converged=candidate.registration_converged,
+                refinement_used=candidate.refinement_used,
+                refined_bbs_score=candidate.refined_bbs_score,
             )
         )
     return rank_candidates_by_registration(updated)

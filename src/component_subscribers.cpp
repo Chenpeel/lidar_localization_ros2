@@ -375,7 +375,8 @@ void PCLLocalization::initialPoseReceived(const geometry_msgs::msg::PoseWithCova
     }
   }
   pose_pub_->publish(*current_pose_with_cov_stamped_ptr_);
-  if (publishPoseTransform(msg->header.stamp, current_pose_with_cov_stamped_ptr_->pose.pose)) {
+  if (publishPoseTransform(
+      msg->header.stamp, current_pose_with_cov_stamped_ptr_->pose.pose, true, true)) {
     if (!publish_tf_) {
       RCLCPP_INFO(get_logger(), "TF broadcast disabled (publish_tf: false)");
     } else if (enable_map_odom_tf_) {
@@ -412,6 +413,10 @@ void PCLLocalization::switchMapCallback(const std_msgs::msg::String::ConstShared
     RCLCPP_WARN(get_logger(), "map_switch: ignoring empty map path");
     return;
   }
+  if (!get_parameter("allow_runtime_map_switch").as_bool()) {
+    RCLCPP_ERROR(get_logger(), "map_switch disabled: restart with an accepted map manifest");
+    return;
+  }
   RCLCPP_INFO(get_logger(), "map_switch: %s", msg->data.c_str());
   if (!loadMapFromPath(msg->data, true)) {
     RCLCPP_ERROR(
@@ -426,6 +431,10 @@ void PCLLocalization::mapReceived(const sensor_msgs::msg::PointCloud2::SharedPtr
 {
   auto state_lock = callback_state_coordinator_.lockState();
   if (shutting_down_.load(std::memory_order_acquire)) {return;}
+  if (!get_parameter("allow_runtime_map_switch").as_bool()) {
+    RCLCPP_ERROR(get_logger(), "map topic replacement disabled for manifest-bound localization");
+    return;
+  }
   RCLCPP_INFO(get_logger(), "mapReceived");
   pcl::PointCloud<pcl::PointXYZI>::Ptr map_cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>);
 

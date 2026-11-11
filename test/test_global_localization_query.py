@@ -722,7 +722,34 @@ def test_registration_scorer_shares_map_crops_without_changing_scores():
         assert together[2].target_point_count == alone[2].target_point_count
 
 
+def test_bbs_refinement_guard_rejects_regression_and_keeps_score_pose_bound():
+    with tempfile.TemporaryDirectory() as tmp:
+        yaml_path = write_occupancy_map(Path(tmp))
+        engine = glq.GlobalLocalizationEngine(
+            glq.GlobalLocalizationConfig(registration_refine_candidates=True,
+                registration_refine_bbs_guard=True), occupancy_yaml=yaml_path)
+        candidate = glq.GlobalLocalizationCandidate(
+            x_m=0.0, y_m=0.0, z_m=0.0, yaw_rad=0.0, score=0.9,
+            hit_count=9, point_count=10, bbs_score=0.9)
+        engine.registration_scorer = _FakeRegistrationScorer({
+            (0.0, 0.0, 0.0, 0.0): _FakeScoreResult(0.1, True, 1.0, 1.0, 0.0, 0.0)})
+        engine._bbs_score_at_pose = lambda *args: 0.1
+        ranked = engine._score_with_registration(np.zeros((8, 3)), [candidate],
+                                                scan_xy=np.ones((8, 2)))
+        assert ranked[0].x_m == 0.0
+        assert not ranked[0].refinement_used
+        assert not ranked[0].registration_converged
+        assert ranked[0].score == 0.0
+        engine._bbs_score_at_pose = lambda *args: 0.91
+        ranked = engine._score_with_registration(np.zeros((8, 3)), [candidate],
+                                                scan_xy=np.ones((8, 2)))
+        assert ranked[0].x_m == 1.0
+        assert ranked[0].refinement_used
+        assert ranked[0].registration_fitness == 0.1
+
+
 if __name__ == "__main__":
+    test_bbs_refinement_guard_rejects_regression_and_keeps_score_pose_bound()
     test_query_recovers_known_pose()
     test_query_handles_empty_scan()
     test_bbs_cpp_search_path_includes_installed_lib_dir()

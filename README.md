@@ -23,6 +23,20 @@ Give it a point cloud map (`.pcd` or `.ply`) and a LiDAR stream; it publishes th
 robot pose in the map. It finds the starting pose by itself, uses odometry and IMU when
 you have them, and works standalone or as the localization source for Nav2.
 
+## BlueWorm fork 配置
+
+- 基于上游1.8.0, 与ndt_omp_ros2 0.2.0共同构建, 保留初始化候选空间共识.
+- `registration_refine_bbs_guard` 默认false, 启用后使用同一扫描重算精修位姿的BBS占据分数;
+  `registration_refine_bbs_margin` 默认0.01, 有效范围[0,1]. 退化或非有限精修结果不作为
+  已验证候选, 不将精修fitness用于未经该配准验证的粗位姿.
+- 全局查询结果新增 `refinement_used` 和 `refined_bbs_score` 诊断字段.
+- `allow_runtime_map_switch` 默认true, 启动后只读. 地图清单绑定部署必须设为false,
+  同时拒绝 `/map_switch` 与点云地图话题替换; 换图必须重新校验部署资产并重启.
+- 仅显式初始/重置位姿允许在按戳TF查询失败后使用时间偏差不超过0.5s的最新里程计TF;
+  正常扫描仍要求按采样戳变换, 不通过改戳伪造新鲜证据.
+- 已完成ROS Humble的BUILD_TESTING=OFF构建, 相关回归源码已补充但未运行测试;
+  未执行公开数据集回放或实机验收, 不以构建通过代替定位精度与运动安全证据.
+
 ## Where to start
 
 | You want to | Go to |

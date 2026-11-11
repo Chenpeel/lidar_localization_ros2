@@ -69,6 +69,9 @@ PCLLocalization::PCLLocalization(const rclcpp::NodeOptions & options)
   // use_imu turned on the legacy IMU deskew, removed in 1.8.0. It stays declared so that
   // on_configure() can refuse it instead of ignoring it.
   declare_parameter("use_imu", false);
+  rcl_interfaces::msg::ParameterDescriptor map_switch_descriptor;
+  map_switch_descriptor.read_only = true;
+  declare_parameter("allow_runtime_map_switch", true, map_switch_descriptor);
   declare_parameter("use_twist_ekf", false);
   declare_parameter("ekf_sigma_pos", 0.01);
   declare_parameter("ekf_sigma_vel", 0.5);

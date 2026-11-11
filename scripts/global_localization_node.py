@@ -105,6 +105,8 @@ class GlobalLocalizationNode(Node):
         # Opt-in NDT registration scoring against a 3D map (g2_ndt_score).
         self.declare_parameter("enable_registration_scoring", False)
         self.declare_parameter("registration_refine_candidates", False)
+        self.declare_parameter("registration_refine_bbs_guard", False)
+        self.declare_parameter("registration_refine_bbs_margin", 0.01)
         self.declare_parameter("map_path", "")
         self.declare_parameter("registration_score_gate", 6.0)
         self.declare_parameter("ndt_resolution", 1.0)
@@ -168,6 +170,10 @@ class GlobalLocalizationNode(Node):
             registration_refine_candidates=bool(
                 self.get_parameter("registration_refine_candidates").value
             ),
+            registration_refine_bbs_guard=bool(
+                self.get_parameter("registration_refine_bbs_guard").value),
+            registration_refine_bbs_margin=float(
+                self.get_parameter("registration_refine_bbs_margin").value),
             map_path=map_path or None,
             registration_score_gate=float(
                 self.get_parameter("registration_score_gate").value
@@ -411,7 +417,11 @@ class GlobalLocalizationNode(Node):
                 "bbs_score": round(candidate.bbs_score, 4),
             }
             if candidate.registration_fitness is not None:
-                entry["registration_fitness"] = round(candidate.registration_fitness, 4)
+                entry["registration_fitness"] = (
+                    round(candidate.registration_fitness, 4)
+                    if math.isfinite(candidate.registration_fitness) else None)
+            entry["refinement_used"] = candidate.refinement_used
+            entry["refined_bbs_score"] = candidate.refined_bbs_score
             if candidate.registration_converged is not None:
                 entry["registration_converged"] = candidate.registration_converged
             ranked.append(entry)
